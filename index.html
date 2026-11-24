@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>リアルタイム文字起こし</title>
+<style>
+  body{font-family:system-ui,"Hiragino Sans","Meiryo",sans-serif;margin:0;background:#f5f6f8;color:#222}
+  header{background:#1a73e8;color:#fff;padding:12px 20px;font-size:18px;font-weight:bold}
+  .tabs{display:flex;background:#fff;border-bottom:1px solid #ddd}
+  .tab{padding:12px 20px;cursor:pointer;border-bottom:3px solid transparent}
+  .tab.active{border-color:#1a73e8;color:#1a73e8;font-weight:bold}
+  section{display:none;padding:20px;max-width:960px}
+  section.active{display:block}
+  .card{background:#fff;border-radius:8px;padding:16px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+  button{font-size:15px;padding:10px 22px;border:0;border-radius:6px;cursor:pointer;margin:4px 8px 4px 0}
+  .primary{background:#1a73e8;color:#fff}
+  .danger{background:#d93025;color:#fff}
+  .plain{background:#e8eaed;color:#222}
+  button:disabled{opacity:.4;cursor:default}
+  select{font-size:14px;padding:8px;min-width:340px}
+  #log{height:440px;overflow-y:auto;white-space:pre-wrap;font-size:14px;line-height:1.7;background:#fafafa;border:1px solid #e0e0e0;padding:10px}
+  .interim{color:#999}
+  .status{margin-top:10px;font-size:14px}
+  .err{color:#d93025}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#bbb;margin-right:6px;vertical-align:middle}
+  .dot.on{background:#d93025;animation:blink 1s infinite}
+  @keyframes blink{50%{opacity:.3}}
+  a{color:#1a73e8}
+  .ok{color:#188038;font-weight:bold}
+  .warn{color:#b06000;font-weight:bold}
+  .meter{height:14px;background:#e8eaed;border-radius:7px;overflow:hidden;margin:8px 0;max-width:420px}
+  #meterBar{height:100%;width:0;background:#188038;transition:width .05s}
+  .guide{background:#f8f9fa;border-left:4px solid #1a73e8;padding:10px 16px;margin-top:12px;font-size:14px;line-height:1.8}
+  .guide h4{margin:6px 0}
+  .guide ol{margin:4px 0 10px;padding-left:22px}
+  .devlist{font-size:13px;color:#555;margin-top:6px}
+  kbd{background:#eee;border:1px solid #ccc;border-radius:3px;padding:0 4px;font-size:12px}
+</style>
+</head>
+<body>
+<header>リアルタイム文字起こし</header>
+<div class="tabs">
+  <div class="tab active" data-t="t1">1: 文字起こし</div>
+  <div class="tab" data-t="t2">2: Geminiで校正</div>
+  <div class="tab" data-t="t3">3: 内容を要約</div>
+  <div class="tab" data-t="t4">初期設定</div>
+</div>
+
+<!-- 1: 文字起こし -->
+<section id="t1" class="active">
+  <div class="card">
+    <div id="audioStatus" class="status" style="margin:0 0 10px">音声入力を確認中...</div>
+    <button id="startBtn" class="primary">スタート</button>
+    <button id="stopBtn" class="danger" disabled>終了</button>
+    <button class="plain" onclick="openAudioPanel()">音声設定</button>
+    <div class="status"><span id="dot" class="dot"></span><span id="status">待機中</span> <span id="elapsed"></span></div>
+    <div id="fileInfo" class="status"></div>
+  </div>
+  <div id="audioPanel" class="card" style="display:none">
+    <h3 style="margin-top:0">音声設定</h3>
+    <div id="diag">確認中...</div>
+    <div id="devList" class="devlist"></div>
+    <div style="margin-top:12px">
+      <b>動作テスト</b>:PCで動画などを再生し、テスト開始を押してメーターが動けばOK
+      <div class="meter"><div id="meterBar"></div></div>
+      <button id="testBtn" class="plain" onclick="toggleMeter()">テスト開始</button>
+      <button class="plain" onclick="checkAudio(true)">再チェック</button>
+      <a href="ms-settings:sound" target="_blank"><button class="plain">Windowsのサウンド設定を開く</button></a>
+      <button class="plain" onclick="closeAudioPanel()">閉じる</button>
+    </div>
+    <div id="guide"></div>
+  </div>
+  <div class="card"><div id="log"></div></div>
+</section>
+
+<!-- 2: 校正 -->
+<section id="t2">
+  <div class="card">
+    <div>校正する文字起こしファイル</div>
+    <select id="proofFile"></select>
+    <button class="plain" onclick="loadFiles('proof')">更新</button><br>
+    <button id="proofBtn" class="primary" onclick="doProof()">校正</button>
+    <div id="proofResult" class="status"></div>
+  </div>
+</section>
+
+<!-- 3: 要約 -->
+<section id="t3">
+  <div class="card">
+    <div>要約するファイル(文字起こし/校正)</div>
+    <select id="sumFile"></select>
+    <button class="plain" onclick="loadFiles('sum')">更新</button><br>
+    <button id="sumBtn" class="primary" onclick="doSummary()">要約</button>
+    <div id="sumResult" class="status"></div>
+  </div>
+</section>
+
+<!-- 初期設定 -->
+<section id="t4">
+  <div class="card">
+    <div>GASウェブアプリのURL(https://script.google.com/macros/s/.../exec)</div>
+    <input id="cfgUrl" style="width:100%;font-size:14px;padding:8px;box-sizing:border-box">
+    <div style="margin-top:12px">トークン(GASで setup を実行してログに表示された値)</div>
+    <input id="cfgToken" style="width:100%;font-size:14px;padding:8px;box-sizing:border-box">
+    <div style="margin-top:12px"><button class="primary" onclick="saveCfg()">保存して接続テスト</button></div>
+    <div id="cfgResult" class="status"></div>
+  </div>
+  <div class="card">
+    <b>どのPCでも使える専用URL</b>(これをブックマーク。別のPCでもこのURLを開くだけで設定済みの状態になります)
+    <input id="shareUrl" readonly style="width:100%;font-size:13px;padding:8px;box-sizing:border-box;margin-top:8px">
+    <button class="plain" onclick="copyShareUrl()">コピー</button>
+    <div class="devlist">* トークンを含むので他人には教えないでください</div>
+  </div>
+</section>
+
+<script>
+// ===== 設定 =====
+const SILENCE_LIMIT_MS = 60 * 60 * 1000; // 1時間音声がなければ自動終了
+const FLUSH_INTERVAL_MS = 5000;          // ドライブへの保存間隔
+
+// ===== 共通 =====
+const $ = id => document.getElementById(id);
+// ===== GAS API 呼び出し =====
+function loadCfg() {
+  try { return JSON.parse(localStorage.getItem('transcribeCfg') || '{}'); } catch (e) { return {}; }
+}
+async function api(action, params) {
+  const cfg = loadCfg();
+  if (!cfg.url || !cfg.token) throw new Error('初期設定(URLとトークン)が未入力です');
+  const res = await fetch(cfg.url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(Object.assign({ token: cfg.token, action: action }, params || {})),
+  });
+  const text = await res.text();
+  let j;
+  try { j = JSON.parse(text); } catch (e) {
+    throw new Error('GASから正しい応答がありません。URLと、デプロイのアクセス権が「全員」になっているか確認してください');
+  }
+  if (!j.ok) throw new Error(j.error);
+  return j.result;
+}
+// 専用URL(#u=GASのURL&t=トークン)で開かれたら設定を取り込む
+(function importCfgFromHash() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get('u') && h.get('t')) {
+    try { localStorage.setItem('transcribeCfg', JSON.stringify({ url: h.get('u'), token: h.get('t') })); } catch (e) {}
+  }
+})();
+function buildShareUrl() {
+  const c = loadCfg();
+  if (!c.url || !c.token) return '';
+  return location.origin + location.pathname + '#u=' + encodeURIComponent(c.url) + '&t=' + encodeURIComponent(c.token);
+}
+function copyShareUrl() {
+  $('shareUrl').select();
+  navigator.clipboard.writeText($('shareUrl').value).catch(() => document.execCommand('copy'));
+}
+async function saveCfg() {
+  const cfg = { url: $('cfgUrl').value.trim(), token: $('cfgToken').value.trim() };
+  try { localStorage.setItem('transcribeCfg', JSON.stringify(cfg)); } catch (e) {}
+  $('cfgResult').className = 'status';
+  $('cfgResult').textContent = '接続テスト中...';
+  try {
+    await api('ping');
+    $('shareUrl').value = buildShareUrl();
+    $('cfgResult').innerHTML = '<span class="ok">【OK】接続できました。「1: 文字起こし」タブから使えます</span>';
+  } catch (e) {
+    $('cfgResult').className = 'status err';
+    $('cfgResult').textContent = '接続失敗: ' + e.message;
+  }
+}
+const pad = n => String(n).padStart(2, '0');
+const clock = d => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab,section').forEach(e => e.classList.remove('active'));
+  t.classList.add('active');
+  $(t.dataset.t).classList.add('active');
+  if (t.dataset.t === 't2') loadFiles('proof');
+  if (t.dataset.t === 't3') loadFiles('sum');
+  if (t.dataset.t === 't4') { const c = loadCfg(); $('cfgUrl').value = c.url || ''; $('cfgToken').value = c.token || ''; $('shareUrl').value = buildShareUrl(); }
+});
+
+function setStatus(msg, isErr) {
+  $('status').textContent = msg;
+  $('status').className = isErr ? 'err' : '';
+}
+
+// ===== 1: 文字起こし(ブラウザ音声認識) =====
+let running = false, fileId = null, startTime = 0, lastVoice = 0;
+let rec = null, timerId = null, flushId = null;
+let pending = '', sending = false;
+
+const interimSpan = document.createElement('span');
+interimSpan.className = 'interim';
+$('log').appendChild(interimSpan);
+
+function appendLog(line) {
+  $('log').insertBefore(document.createTextNode(line + '\n'), interimSpan);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+
+$('startBtn').onclick = start;
+$('stopBtn').onclick = () => stop('終了しました');
+
+async function start() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { setStatus('このブラウザは音声認識に未対応です。Chromeを使用してください', true); return; }
+
+  stopMeter();
+  if (audioState !== 'ok' && audioState !== 'unknown') {
+    $('audioPanel').style.display = 'block';
+  }
+  $('startBtn').disabled = true;
+  setStatus('準備中...');
+  try {
+    const info = await api('startSession');
+    fileId = info.fileId;
+    $('fileInfo').innerHTML = `保存先: <a href="${info.url}" target="_blank">${info.fileName}</a>`;
+    $('log').textContent = '';
+    interimSpan.textContent = '';
+    $('log').appendChild(interimSpan);
+
+    running = true;
+    startTime = lastVoice = Date.now();
+    startRecognition(SR);
+    timerId = setInterval(tick, 1000);
+    flushId = setInterval(flushText, FLUSH_INTERVAL_MS);
+
+    $('stopBtn').disabled = false;
+    $('dot').classList.add('on');
+    setStatus('文字起こし中');
+  } catch (e) {
+    $('startBtn').disabled = false;
+    setStatus('開始できません: ' + e.message, true);
+  }
+}
+
+function startRecognition(SR) {
+  rec = new SR();
+  rec.lang = 'ja-JP';
+  rec.continuous = true;
+  rec.interimResults = true;
+
+  rec.onresult = e => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) {
+        const t = r[0].transcript.trim();
+        if (t) {
+          const line = `[${clock(new Date())}] ${t}`;
+          appendLog(line);
+          pending += line + '\n';
+          lastVoice = Date.now();
+        }
+      } else {
+        interim += r[0].transcript;
+      }
+    }
+    interimSpan.textContent = interim;
+    if (interim) lastVoice = Date.now();
+  };
+
+  rec.onerror = e => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      stop('マイク(音声入力)の使用が許可されていません', true);
+    } else if (e.error === 'audio-capture') {
+      stop('音声入力デバイスが見つかりません。ステレオミキサー等の設定を確認してください', true);
+    }
+    // no-speech / network などは onend で自動再開
+  };
+
+  // 音声認識は無音などで自動停止するため、実行中は再開し続ける
+  rec.onend = () => {
+    if (running && rec) setTimeout(() => { try { rec.start(); } catch (e) {} }, 300);
+  };
+
+  rec.start();
+}
+
+function tick() {
+  const sec = Math.floor((Date.now() - startTime) / 1000);
+  $('elapsed').textContent = `経過 ${pad(Math.floor(sec / 3600))}:${pad(Math.floor(sec / 60) % 60)}:${pad(sec % 60)}`;
+  if (Date.now() - lastVoice > SILENCE_LIMIT_MS) stop('1時間音声がなかったため自動終了しました');
+}
+
+async function stop(msg, isErr) {
+  if (!running) return;
+  running = false;
+  clearInterval(timerId); clearInterval(flushId);
+  if (rec) { const r = rec; rec = null; try { r.stop(); } catch (e) {} }
+  $('stopBtn').disabled = true;
+  $('dot').classList.remove('on');
+  interimSpan.textContent = '';
+  setStatus('保存中...');
+
+  while (sending) await new Promise(r => setTimeout(r, 300));
+  await flushText();
+
+  setStatus(msg, isErr);
+  $('startBtn').disabled = false;
+}
+
+async function flushText() {
+  if (sending || !pending || !fileId) return;
+  sending = true;
+  const chunk = pending; pending = '';
+  try {
+    await api('append', { fileId: fileId, text: chunk });
+  } catch (e) {
+    pending = chunk + pending; // 失敗分は次回再送
+    if (running) setStatus('保存エラー(再試行します): ' + e.message, true);
+  } finally {
+    sending = false;
+  }
+}
+
+window.addEventListener('beforeunload', e => { if (running) { e.preventDefault(); e.returnValue = ''; } });
+
+
+// ===== 音声設定(入力デバイスの診断と案内) =====
+// PCの音を拾える入力デバイス名のパターン
+const SL2 = "/" + "/";
+const LOOPBACK_RE = /stereo\s*mix|ステレオ\s*ミキサー|cable output|vb-audio|voicemeeter|what u hear|wave out|loopback|blackhole/i;
+let audioState = 'unknown'; // ok / found / none / denied
+let meterStream = null, meterCtx = null, meterRaf = null;
+
+const GUIDE_STEREO = `
+<h4>方法A:ステレオミキサーを有効にする(まずこちら)</h4>
+<ol>
+  <li>上の「Windowsのサウンド設定を開く」を押す(開かない場合は <kbd>Win</kbd>+<kbd>I</kbd> →「システム」→「サウンド」)</li>
+  <li>下の方の「サウンドの詳細設定」(Windows 10は「サウンド コントロール パネル」)を開く</li>
+  <li>「録音」タブの空いている所を右クリック →「無効なデバイスの表示」にチェック</li>
+  <li>「ステレオ ミキサー」を右クリック →「有効」→ もう一度右クリック →「既定のデバイスとして設定」(すでに「既定のデバイス」と表示されていれば不要)</li>
+  <li>このページの「再チェック」を押す</li>
+</ol>`;
+
+const GUIDE_VBCABLE = `
+<h4>方法B:ステレオミキサーが無い場合は VB-CABLE(無料)を入れる</h4>
+<ol>
+  <li><a href="https:${SL2}vb-audio.com/Cable/" target="_blank">vb-audio.com/Cable</a> から「VBCABLE_Driver_Pack」をダウンロードして解凍</li>
+  <li>「VBCABLE_Setup_x64.exe」を右クリック →「管理者として実行」→「Install Driver」→ PCを再起動</li>
+  <li>サウンドの詳細設定の「再生」タブで「CABLE Input」を右クリック →「既定のデバイスとして設定」</li>
+  <li>「録音」タブで「CABLE Output」を右クリック →「既定のデバイスとして設定」</li>
+  <li>同じく「CABLE Output」→「プロパティ」→「聴く」タブ →「このデバイスを聴く」にチェック、再生先にいつものスピーカー/ヘッドホンを選んで OK(会議音声が自分にも聞こえるようにするため)</li>
+  <li>このページの「再チェック」を押す</li>
+</ol>`;
+
+const GUIDE_SET_DEFAULT = name => `
+<h4>「${name}」を既定の録音デバイスにしてください</h4>
+<ol>
+  <li>上の「Windowsのサウンド設定を開く」を押す →「サウンドの詳細設定」(Windows 10は「サウンド コントロール パネル」)</li>
+  <li>「録音」タブで「${name.replace(/\s*\(.*$/, '')}」を右クリック →「既定のデバイスとして設定」</li>
+  <li>このページの「再チェック」を押す</li>
+</ol>`;
+
+const GUIDE_MAC = `
+<h4>Macの場合</h4>
+<ol>
+  <li>無料の「BlackHole 2ch」をインストール</li>
+  <li>「Audio MIDI設定」で「複数出力装置」(スピーカー+BlackHole)を作り、出力に設定</li>
+  <li>「システム設定」→「サウンド」→ 入力を「BlackHole 2ch」にする</li>
+</ol>`;
+
+const NOTE = `<p style="margin:6px 0 0;color:#555">* セキュリティソフトが「Rundll32 や Chrome がマイクにアクセス」と通知することがありますが、サウンド設定画面や本アプリによるもので問題ありません。<br>* 設定後は自分の声は文字起こしされません(会議相手の声のみ)。PCの音量をミュートにすると拾えない場合があります。</p>`;
+
+async function checkAudio(showPanel) {
+  const diag = $('diag'), guide = $('guide'), st = $('audioStatus');
+  try {
+    // デバイス名を取得するには一度だけ許可が必要
+    let devices = await navigator.mediaDevices.enumerateDevices();
+    if (!devices.some(d => d.kind === 'audioinput')) throw Object.assign(new Error('no device'), { name: 'NotFoundError' });
+    if (!devices.some(d => d.kind === 'audioinput' && d.label)) {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      s.getTracks().forEach(t => t.stop());
+      devices = await navigator.mediaDevices.enumerateDevices();
+    }
+    const inputs = devices.filter(d => d.kind === 'audioinput');
+    const def = inputs.find(d => d.deviceId === 'default') || inputs[0];
+    const defName = def ? def.label.replace(/^(既定|Default)\s*-\s*/, '') : '(なし)';
+    const loop = inputs.find(d => d.deviceId !== 'default' && d.deviceId !== 'communications' && LOOPBACK_RE.test(d.label));
+    const isMac = /Mac/i.test(navigator.platform);
+
+    $('devList').textContent = '検出した入力デバイス: ' +
+      inputs.filter(d => !['default', 'communications'].includes(d.deviceId)).map(d => d.label).join(' / ');
+
+    if (def && LOOPBACK_RE.test(def.label)) {
+      audioState = 'ok';
+      st.innerHTML = `<span class="ok">【OK】音声入力OK</span>(${defName})`;
+      diag.innerHTML = `<span class="ok">【OK】PCの音を拾う設定になっています</span><br>現在の入力: ${defName}`;
+      guide.innerHTML = '';
+    } else if (loop) {
+      audioState = 'found';
+      st.innerHTML = `<span class="warn">【注意】入力がPCの音になっていません</span>(現在: ${defName})`;
+      diag.innerHTML = `<span class="warn">【注意】現在の入力は「${defName}」です</span><br>PCの音を拾えるデバイス「${loop.label}」が見つかりました。`;
+      guide.innerHTML = `<div class="guide">${GUIDE_SET_DEFAULT(loop.label)}${NOTE}</div>`;
+    } else {
+      audioState = 'none';
+      st.innerHTML = `<span class="warn">【注意】PCの音を拾う設定がされていません</span>(現在: ${defName})`;
+      diag.innerHTML = `<span class="warn">【注意】現在の入力は「${defName}」です</span><br>このままでは会議相手の声を文字起こしできません。下の手順で設定してください。`;
+      guide.innerHTML = `<div class="guide">${isMac ? GUIDE_MAC : GUIDE_STEREO + GUIDE_VBCABLE}${NOTE}</div>`;
+    }
+  } catch (e) {
+    if (e.name === 'NotFoundError') {
+      audioState = 'none';
+      st.innerHTML = `<span class="warn">【注意】音声入力デバイスがありません</span>`;
+      diag.innerHTML = `<span class="warn">【注意】このPCには音声入力デバイスがありません(マイクの許可は問題ありません)</span><br>
+        下の方法A(ステレオミキサー)か方法B(VB-CABLE)で、PCの音を入力にしてください。`;
+      $('devList').textContent = '';
+      guide.innerHTML = `<div class="guide">${GUIDE_STEREO + GUIDE_VBCABLE}${NOTE}</div>`;
+      $('audioPanel').style.display = 'block';
+      return;
+    }
+    audioState = 'denied';
+    const pol = (document.permissionsPolicy || document.featurePolicy);
+    const polOk = pol ? pol.allowsFeature('microphone') : '不明';
+    let permState = '不明';
+    try { permState = (await navigator.permissions.query({ name: 'microphone' })).state; } catch (_) {}
+    st.innerHTML = `<span class="warn">【注意】音声入力を確認できません</span>`;
+    diag.innerHTML = `<span class="err">音声入力(マイク)の使用が許可されていません。</span>
+      <div class="devlist">エラー内容: ${e.name || ''} ${e.message || e}<br>
+      診断: ページのマイク利用許可(ポリシー)=${polOk} / Chromeの許可状態=${permState}</div>
+      <div class="guide">
+      <h4>Chromeでマイクを許可する</h4>
+      <ol>
+        <li>画面最上部のURL欄の<b>左端のアイコン</b>をクリック</li>
+        <li>「サイトの設定」をクリック → 開いたページの「マイク」を「許可」に変更</li>
+        <li><kbd>F5</kbd> キーでページを再読み込み</li>
+      </ol>
+      <h4>それでもダメな場合</h4>
+      <ol>
+        <li>URL欄に <b>chrome:${SL2}settings/content/microphone</b> と入力 →「許可しないサイト」にこのページのアドレスがあればゴミ箱で削除</li>
+        <li><kbd>Win</kbd>+<kbd>I</kbd> →「プライバシーとセキュリティ」→「マイク」→「マイクへのアクセス」と「デスクトップ アプリがマイクにアクセスできるようにする」をオン</li>
+      </ol></div>`;
+    $('guide').innerHTML = '';
+  }
+  if (showPanel || audioState !== 'ok') $('audioPanel').style.display = 'block';
+}
+
+function openAudioPanel() { $('audioPanel').style.display = 'block'; checkAudio(true); }
+function closeAudioPanel() { stopMeter(); $('audioPanel').style.display = 'none'; }
+
+async function toggleMeter() {
+  if (meterStream) { stopMeter(); return; }
+  try {
+    meterStream = await navigator.mediaDevices.getUserMedia({
+      audio: { deviceId: 'default', echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+    meterCtx = new AudioContext();
+    const an = meterCtx.createAnalyser(); an.fftSize = 1024;
+    meterCtx.createMediaStreamSource(meterStream).connect(an);
+    const buf = new Float32Array(an.fftSize);
+    const draw = () => {
+      an.getFloatTimeDomainData(buf);
+      let sum = 0; for (const v of buf) sum += v * v;
+      $('meterBar').style.width = Math.min(100, Math.sqrt(sum / buf.length) * 400) + '%';
+      meterRaf = requestAnimationFrame(draw);
+    };
+    draw();
+    $('testBtn').textContent = 'テスト停止';
+  } catch (e) {
+    $('diag').innerHTML += `<br><span class="err">テストを開始できません: ${e.message}</span>`;
+  }
+}
+
+function stopMeter() {
+  if (meterRaf) cancelAnimationFrame(meterRaf);
+  if (meterStream) meterStream.getTracks().forEach(t => t.stop());
+  if (meterCtx) meterCtx.close();
+  meterStream = meterCtx = meterRaf = null;
+  $('meterBar').style.width = '0';
+  $('testBtn').textContent = 'テスト開始';
+}
+
+// 初期設定が未入力なら設定タブを開く
+if (!loadCfg().url) document.querySelector('.tab[data-t="t4"]').click();
+
+// 起動時に自動チェック、デバイスが変わったら再チェック
+checkAudio(false);
+if (navigator.mediaDevices) navigator.mediaDevices.ondevicechange = () => checkAudio(false);
+
+// ===== 2: 校正 =====
+async function loadFiles(kind) {
+  const sel = $(kind === 'proof' ? 'proofFile' : 'sumFile');
+  sel.innerHTML = '<option>読み込み中...</option>';
+  try {
+    const list = await api('listFiles', { kinds: kind === 'proof' ? ['文字起こし'] : ['文字起こし', '校正'] });
+    sel.innerHTML = list.length
+      ? list.map(f => `<option value="${f.id}">${f.name}</option>`).join('')
+      : '<option value="">ファイルがありません</option>';
+  } catch (e) {
+    sel.innerHTML = `<option value="">読み込み失敗: ${e.message}</option>`;
+  }
+}
+
+async function doProof() {
+  const id = $('proofFile').value;
+  if (!id) return;
+  const out = $('proofResult');
+  $('proofBtn').disabled = true;
+  out.className = 'status';
+  out.textContent = '校正を準備中...';
+  try {
+    const job = await api('proofreadStart', { fileId: id });
+    for (let i = 0; i < job.total; i++) {
+      out.textContent = `校正中... ${i + 1} / ${job.total}(タブを閉じないでください)`;
+      for (let retry = 0; ; retry++) {
+        try { await api('proofreadChunk', { fileId: id, outId: job.outId, index: i }); break; }
+        catch (e) { if (retry >= 2) throw e; await new Promise(r => setTimeout(r, 30000)); }
+      }
+    }
+    out.innerHTML = `完了: <a href="${job.url}" target="_blank">${job.name}</a>`;
+  } catch (e) {
+    out.className = 'status err';
+    out.textContent = '校正失敗: ' + e.message;
+  } finally {
+    $('proofBtn').disabled = false;
+  }
+}
+
+// ===== 3: 要約 =====
+async function doSummary() {
+  const id = $('sumFile').value;
+  if (!id) return;
+  const out = $('sumResult');
+  $('sumBtn').disabled = true;
+  out.className = 'status';
+  out.textContent = '要約中...(1〜数分かかります)';
+  try {
+    const r = await api('summarize', { fileId: id });
+    out.innerHTML = `完了: <a href="${r.url}" target="_blank">${r.name}</a>`;
+  } catch (e) {
+    out.className = 'status err';
+    out.textContent = '要約失敗: ' + e.message;
+  } finally {
+    $('sumBtn').disabled = false;
+  }
+}
+</script>
+</body>
+</html>
