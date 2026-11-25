@@ -108,6 +108,10 @@
     <button id="proofBtn" class="primary" onclick="doProof()">校正</button>
     <div id="proofResult" class="status"></div>
   </div>
+  <div class="card">
+    <div class="monhead"><b>処理状況</b><button class="plain" onclick="refreshJobs()">更新</button></div>
+    <div id="jobs2" class="devlist" style="margin:0">読み込み中...</div>
+  </div>
 </section>
 
 <!-- 3: 要約 -->
@@ -118,6 +122,10 @@
     <button class="plain" onclick="loadFiles('sum')">更新</button><br>
     <button id="sumBtn" class="primary" onclick="doSummary()">要約</button>
     <div id="sumResult" class="status"></div>
+  </div>
+  <div class="card">
+    <div class="monhead"><b>処理状況</b><button class="plain" onclick="refreshJobs()">更新</button></div>
+    <div id="jobs3" class="devlist" style="margin:0">読み込み中...</div>
   </div>
 </section>
 
@@ -162,13 +170,15 @@
       <li>文字起こしファイルを選び、Gemini(AI)で校正する</li>
       <li>校正のルール:誤変換・同音異義語・聞き間違いを文脈から修正/「えー」「あの」などのつなぎ言葉や言い直しを削除/句読点を補って読みやすく/<b>内容の追加・削除・要約はしない</b>/時刻はそのまま残す</li>
       <li>長い文字起こしは約20,000文字ずつに分けて順番に処理する(何時間の会議でも処理できる)</li>
-      <li>混雑などで失敗した場合は、30秒おいて自動で2回まで再試行</li>
+      <li><b>処理はサーバー(GAS)が裏で行う</b>:ボタンを押すと受付だけ行い、GASが順番に処理する。画面・タブを閉じても、PCの電源を切っても処理は続く</li>
+      <li>完了・エラーは<b>メールで通知</b>(GASを作ったGoogleアカウント宛て)。画面の「処理状況」でも進み具合を確認できる</li>
+      <li>混雑などで失敗した場合は、1分おいて自動で再試行(3回まで)</li>
       <li>保存ファイル名:<b>日時+校正</b>(テキストファイル)</li>
     </ul>
 
     <h3>4. 要約の仕様(後日)</h3>
     <ul>
-      <li>文字起こし、または校正済みのファイルを選び、全文をGeminiに渡して要約する</li>
+      <li>文字起こし、または校正済みのファイルを選び、全文をGeminiに渡して要約する(校正と同じくサーバーで裏処理し、完了をメール通知)</li>
       <li>要約の構成:<b>概要/主な議題と議論内容/決定事項/ToDo・宿題(担当者・期限が分かれば)/次回予定・その他</b>。該当がない項目は「特になし」</li>
       <li>結果は見出し・箇条書きに整えた<b>Googleドキュメント</b>として作成</li>
       <li>保存ファイル名:<b>日時+要約</b></li>
@@ -217,15 +227,16 @@
     <h3>校正(後日)</h3>
     <ol>
       <li>「2: Geminiで校正」タブ → 文字起こしファイルを選ぶ(新しい順)</li>
-      <li>「校正」を押す。進み具合「校正中... 1 / 3」が表示される。<b>完了までタブを閉じない</b></li>
-      <li>完了したらリンクから「日時+校正」ファイルを開く</li>
+      <li>「校正」を押すと受付される。<b>画面を閉じても処理は続く</b></li>
+      <li>進み具合は下の「処理状況」に表示(15秒ごとに自動更新)。完了するとメールが届く</li>
+      <li>メールか「処理状況」のリンクから「日時+校正」ファイルを開く</li>
     </ol>
 
     <h3>要約(後日)</h3>
     <ol>
       <li>「3: 内容を要約」タブ → 文字起こし、または校正ファイルを選ぶ(校正済みの方が要約の精度が上がる)</li>
-      <li>「要約」を押す(1〜数分)</li>
-      <li>完了したらリンクから「日時+要約」のGoogleドキュメントを開く</li>
+      <li>「要約」を押すと受付される(画面を閉じても処理は続く)</li>
+      <li>完了するとメールが届く。メールか「処理状況」のリンクから「日時+要約」のGoogleドキュメントを開く</li>
     </ol>
 
     <h3>困ったとき</h3>
@@ -238,6 +249,7 @@
       <tr><td>「トークンが一致しません」</td><td>トークンを入れ直す(GASで setup を実行するとログに表示)</td></tr>
       <tr><td>校正・要約で「Gemini API が混雑しています」「429」</td><td>無料枠の回数制限。時間をおいて再実行</td></tr>
       <tr><td>校正・要約で「GEMINI_API_KEY が未設定です」</td><td>GASのスクリプト プロパティに GEMINI_API_KEY を登録</td></tr>
+      <tr><td>処理状況が「待機中」のまま5分以上変わらない</td><td>GASのエディタで setup を実行し、承認画面が出たら許可する(コードを更新した後に必要)</td></tr>
       <tr><td>画面が古いまま</td><td>Ctrl+F5 で再読み込み</td></tr>
     </table>
   </div>
@@ -325,8 +337,8 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   document.querySelectorAll('.tab,section').forEach(e => e.classList.remove('active'));
   t.classList.add('active');
   $(t.dataset.t).classList.add('active');
-  if (t.dataset.t === 't2') loadFiles('proof');
-  if (t.dataset.t === 't3') loadFiles('sum');
+  if (t.dataset.t === 't2') { loadFiles('proof'); refreshJobs(); }
+  if (t.dataset.t === 't3') { loadFiles('sum'); refreshJobs(); }
   if (t.dataset.t === 't4') { const c = loadCfg(); $('cfgUrl').value = c.url || ''; $('cfgToken').value = c.token || ''; $('shareUrl').value = buildShareUrl(); }
 });
 
@@ -729,49 +741,54 @@ async function loadFiles(kind) {
   }
 }
 
-async function doProof() {
-  const id = $('proofFile').value;
+// ===== 2・3: 校正・要約(サーバーで裏処理) =====
+const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+let jobTimer = null;
+
+async function enqueue(type, selId, btnId, outId) {
+  const id = $(selId).value;
   if (!id) return;
-  const out = $('proofResult');
-  $('proofBtn').disabled = true;
+  const out = $(outId);
+  $(btnId).disabled = true;
   out.className = 'status';
-  out.textContent = '校正を準備中...';
+  out.textContent = '受付中...';
   try {
-    const job = await api('proofreadStart', { fileId: id });
-    for (let i = 0; i < job.total; i++) {
-      out.textContent = `校正中... ${i + 1} / ${job.total}(タブを閉じないでください)`;
-      for (let retry = 0; ; retry++) {
-        try { await api('proofreadChunk', { fileId: id, outId: job.outId, index: i }); break; }
-        catch (e) { if (retry >= 2) throw e; await new Promise(r => setTimeout(r, 30000)); }
-      }
-    }
-    out.innerHTML = `完了: <a href="${job.url}" target="_blank">${job.name}</a>`;
+    renderJobs(await api('enqueue', { jobType: type, fileId: id }));
+    out.innerHTML = '<span class="ok">【受付しました】サーバーで処理します。この画面やタブを閉じても処理は続きます。完了したらメールでお知らせします。</span>';
+    startJobPolling();
   } catch (e) {
     out.className = 'status err';
-    out.textContent = '校正失敗: ' + e.message;
+    out.textContent = '受付できませんでした: ' + e.message;
   } finally {
-    $('proofBtn').disabled = false;
+    $(btnId).disabled = false;
   }
+}
+const doProof = () => enqueue('proof', 'proofFile', 'proofBtn', 'proofResult');
+const doSummary = () => enqueue('summary', 'sumFile', 'sumBtn', 'sumResult');
+
+function renderJobs(jobs) {
+  const fmt = ms => { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+  const state = j => {
+    if (j.status === 'waiting') return '待機中(1〜2分で開始)';
+    if (j.status === 'running') return j.type === 'proof' && j.total ? `処理中 ${j.index} / ${j.total}` : '処理中';
+    if (j.status === 'done') return `<span class="ok">完了</span> <a href="${esc(j.url)}" target="_blank">${esc(j.outName)}</a>`;
+    return `<span class="err">エラー: ${esc(j.error)}</span>`;
+  };
+  const html = jobs.length
+    ? '<table class="doc" style="font-size:13px"><tr><th>受付</th><th>種類</th><th>元ファイル</th><th>状態・結果</th></tr>' +
+      jobs.map(j => `<tr><td>${fmt(j.created)}</td><td>${j.type === 'proof' ? '校正' : '要約'}</td><td>${esc(j.srcName)}</td><td>${state(j)}</td></tr>`).join('') +
+      '</table>'
+    : '受付した処理はありません';
+  ['jobs2', 'jobs3'].forEach(id => { const el = $(id); if (el) el.innerHTML = html; });
+  if (jobs.some(j => j.status === 'waiting' || j.status === 'running')) startJobPolling(); else stopJobPolling();
 }
 
-// ===== 3: 要約 =====
-async function doSummary() {
-  const id = $('sumFile').value;
-  if (!id) return;
-  const out = $('sumResult');
-  $('sumBtn').disabled = true;
-  out.className = 'status';
-  out.textContent = '要約中...(1〜数分かかります)';
-  try {
-    const r = await api('summarize', { fileId: id });
-    out.innerHTML = `完了: <a href="${r.url}" target="_blank">${r.name}</a>`;
-  } catch (e) {
-    out.className = 'status err';
-    out.textContent = '要約失敗: ' + e.message;
-  } finally {
-    $('sumBtn').disabled = false;
-  }
+async function refreshJobs() {
+  try { renderJobs(await api('jobs')); }
+  catch (e) { ['jobs2', 'jobs3'].forEach(id => { $(id).textContent = '処理状況を取得できません: ' + e.message; }); }
 }
+function startJobPolling() { if (!jobTimer) jobTimer = setInterval(refreshJobs, 15000); }
+function stopJobPolling() { if (jobTimer) { clearInterval(jobTimer); jobTimer = null; } }
 </script>
 </body>
 </html>
