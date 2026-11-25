@@ -18,8 +18,12 @@
   .plain{background:#e8eaed;color:#222}
   button:disabled{opacity:.4;cursor:default}
   select{font-size:14px;padding:8px;min-width:340px}
-  #log{height:440px;overflow-y:auto;white-space:pre-wrap;font-size:14px;line-height:1.7;background:#fafafa;border:1px solid #e0e0e0;padding:10px}
-  .interim{color:#999}
+  #log{height:460px;overflow-y:auto;white-space:pre-wrap;font-size:16px;line-height:1.8;background:#fafafa;border:1px solid #e0e0e0;padding:10px}
+  .interim{color:#1a73e8;background:#e8f0fe;border-radius:4px}
+  .bar{height:100%;width:0;background:#188038;transition:width .05s}
+  .lvl{display:flex;align-items:center;gap:10px;margin-top:10px;font-size:13px}
+  .lvl .meter{flex:1;margin:0}
+  .monhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:14px}
   .status{margin-top:10px;font-size:14px}
   .err{color:#d93025}
   .dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#bbb;margin-right:6px;vertical-align:middle}
@@ -29,7 +33,6 @@
   .ok{color:#188038;font-weight:bold}
   .warn{color:#b06000;font-weight:bold}
   .meter{height:14px;background:#e8eaed;border-radius:7px;overflow:hidden;margin:8px 0;max-width:420px}
-  #meterBar{height:100%;width:0;background:#188038;transition:width .05s}
   .guide{background:#f8f9fa;border-left:4px solid #1a73e8;padding:10px 16px;margin-top:12px;font-size:14px;line-height:1.8}
   .guide h4{margin:6px 0}
   .guide ol{margin:4px 0 10px;padding-left:22px}
@@ -55,6 +58,7 @@
     <button class="plain" onclick="openAudioPanel()">音声設定</button>
     <div class="status"><span id="dot" class="dot"></span><span id="status">待機中</span> <span id="elapsed"></span></div>
     <div id="fileInfo" class="status"></div>
+    <div id="liveLevel" class="lvl" style="display:none">入力レベル<div class="meter"><div id="liveBar" class="bar"></div></div><span id="liveLabel" style="min-width:48px"></span></div>
   </div>
   <div id="audioPanel" class="card" style="display:none">
     <h3 style="margin-top:0">音声設定</h3>
@@ -62,7 +66,8 @@
     <div id="devList" class="devlist"></div>
     <div style="margin-top:12px">
       <b>動作テスト</b>:PCで動画などを再生し、テスト開始を押してメーターが動けばOK
-      <div class="meter"><div id="meterBar"></div></div>
+      <div class="lvl"><div class="meter"><div id="meterBar" class="bar"></div></div><span id="meterLabel" style="min-width:48px"></span></div>
+      <div class="devlist">黄色(小さい)の場合:Windowsの音量を50%以上にする。それでも小さければ、サウンドの詳細設定 →「録音」→ ステレオ ミキサーのプロパティ →「レベル」を100にする</div>
       <button id="testBtn" class="plain" onclick="toggleMeter()">テスト開始</button>
       <button class="plain" onclick="checkAudio(true)">再チェック</button>
       <a href="ms-settings:sound" target="_blank"><button class="plain">Windowsのサウンド設定を開く</button></a>
@@ -70,7 +75,10 @@
     </div>
     <div id="guide"></div>
   </div>
-  <div class="card"><div id="log"></div></div>
+  <div class="card">
+    <div class="monhead"><b>文字起こしモニター(リアルタイム)</b><span id="monInfo" class="devlist" style="margin:0"></span></div>
+    <div id="log"></div>
+  </div>
 </section>
 
 <!-- 2: 校正 -->
@@ -196,9 +204,16 @@ const interimSpan = document.createElement('span');
 interimSpan.className = 'interim';
 $('log').appendChild(interimSpan);
 
+let lineCount = 0, lastLineTime = '';
+function nearBottom() { const l = $('log'); return l.scrollHeight - l.scrollTop - l.clientHeight < 60; }
+function updateMonInfo() {
+  $('monInfo').textContent = running || lineCount ? `${lineCount}行` + (lastLineTime ? ` / 最終認識 ${lastLineTime}` : '') : '';
+}
 function appendLog(line) {
+  const stick = nearBottom();
   $('log').insertBefore(document.createTextNode(line + '\n'), interimSpan);
-  $('log').scrollTop = $('log').scrollHeight;
+  if (stick) $('log').scrollTop = $('log').scrollHeight;
+  lineCount++; lastLineTime = clock(new Date()); updateMonInfo();
 }
 
 $('startBtn').onclick = start;
@@ -209,9 +224,8 @@ async function start() {
   if (!SR) { setStatus('このブラウザは音声認識に未対応です。Chromeを使用してください', true); return; }
 
   stopMeter();
-  if (audioState !== 'ok' && audioState !== 'unknown') {
-    $('audioPanel').style.display = 'block';
-  }
+  if (audioState === 'ok') $('audioPanel').style.display = 'none';
+  else if (audioState !== 'unknown') $('audioPanel').style.display = 'block';
   $('startBtn').disabled = true;
   setStatus('準備中...');
   try {
@@ -231,6 +245,12 @@ async function start() {
     $('stopBtn').disabled = false;
     $('dot').classList.add('on');
     setStatus('文字起こし中');
+    lineCount = 0; lastLineTime = ''; updateMonInfo();
+    try {
+      stopLiveMeter = await createMeter($('liveBar'), $('liveLabel'));
+      $('liveLevel').style.display = 'flex';
+    } catch (e) {}
+    $('log').scrollIntoView({ behavior: 'smooth', block: 'center' });
   } catch (e) {
     $('startBtn').disabled = false;
     setStatus('開始できません: ' + e.message, true);
@@ -259,7 +279,9 @@ function startRecognition(SR) {
         interim += r[0].transcript;
       }
     }
-    interimSpan.textContent = interim;
+    const stick = nearBottom();
+    interimSpan.textContent = interim ? '認識中: ' + interim : '';
+    if (stick) $('log').scrollTop = $('log').scrollHeight;
     if (interim) lastVoice = Date.now();
   };
 
@@ -294,6 +316,8 @@ async function stop(msg, isErr) {
   $('stopBtn').disabled = true;
   $('dot').classList.remove('on');
   interimSpan.textContent = '';
+  if (stopLiveMeter) { stopLiveMeter(); stopLiveMeter = null; }
+  $('liveLevel').style.display = 'none';
   setStatus('保存中...');
 
   while (sending) await new Promise(r => setTimeout(r, 300));
@@ -325,7 +349,6 @@ window.addEventListener('beforeunload', e => { if (running) { e.preventDefault()
 const SL2 = "/" + "/";
 const LOOPBACK_RE = /stereo\s*mix|ステレオ\s*ミキサー|cable output|vb-audio|voicemeeter|what u hear|wave out|loopback|blackhole/i;
 let audioState = 'unknown'; // ok / found / none / denied
-let meterStream = null, meterCtx = null, meterRaf = null;
 
 const GUIDE_STEREO = `
 <h4>方法A:ステレオミキサーを有効にする(まずこちら)</h4>
@@ -442,23 +465,48 @@ async function checkAudio(showPanel) {
 function openAudioPanel() { $('audioPanel').style.display = 'block'; checkAudio(true); }
 function closeAudioPanel() { stopMeter(); $('audioPanel').style.display = 'none'; }
 
+// 音量(RMS)を見やすい目盛り(-60dB〜0dB → 0〜100%)に変換
+function levelPct(rms) {
+  if (rms <= 0) return 0;
+  return Math.max(0, Math.min(100, (20 * Math.log10(rms) + 60) / 60 * 100));
+}
+
+// 既定の入力デバイスの音量メーターを動かす(戻り値: 停止用の関数)
+async function createMeter(bar, label) {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { deviceId: 'default', echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+  });
+  const ctx = new AudioContext();
+  const an = ctx.createAnalyser(); an.fftSize = 2048;
+  ctx.createMediaStreamSource(stream).connect(an);
+  const buf = new Float32Array(an.fftSize);
+  let raf = null, peak = 0;
+  const draw = () => {
+    an.getFloatTimeDomainData(buf);
+    let sum = 0; for (const v of buf) sum += v * v;
+    const p = levelPct(Math.sqrt(sum / buf.length));
+    peak = Math.max(p, peak * 0.97);
+    bar.style.width = p + '%';
+    bar.style.background = p < 35 ? '#f9ab00' : '#188038';
+    if (label) label.textContent = peak < 5 ? '無音' : peak < 35 ? '小さい' : 'OK';
+    raf = requestAnimationFrame(draw);
+  };
+  draw();
+  return () => {
+    if (raf) cancelAnimationFrame(raf);
+    stream.getTracks().forEach(t => t.stop());
+    ctx.close();
+    bar.style.width = '0';
+    if (label) label.textContent = '';
+  };
+}
+
+let stopTestMeter = null, stopLiveMeter = null;
+
 async function toggleMeter() {
-  if (meterStream) { stopMeter(); return; }
+  if (stopTestMeter) { stopMeter(); return; }
   try {
-    meterStream = await navigator.mediaDevices.getUserMedia({
-      audio: { deviceId: 'default', echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-    });
-    meterCtx = new AudioContext();
-    const an = meterCtx.createAnalyser(); an.fftSize = 1024;
-    meterCtx.createMediaStreamSource(meterStream).connect(an);
-    const buf = new Float32Array(an.fftSize);
-    const draw = () => {
-      an.getFloatTimeDomainData(buf);
-      let sum = 0; for (const v of buf) sum += v * v;
-      $('meterBar').style.width = Math.min(100, Math.sqrt(sum / buf.length) * 400) + '%';
-      meterRaf = requestAnimationFrame(draw);
-    };
-    draw();
+    stopTestMeter = await createMeter($('meterBar'), $('meterLabel'));
     $('testBtn').textContent = 'テスト停止';
   } catch (e) {
     $('diag').innerHTML += `<br><span class="err">テストを開始できません: ${e.message}</span>`;
@@ -466,11 +514,7 @@ async function toggleMeter() {
 }
 
 function stopMeter() {
-  if (meterRaf) cancelAnimationFrame(meterRaf);
-  if (meterStream) meterStream.getTracks().forEach(t => t.stop());
-  if (meterCtx) meterCtx.close();
-  meterStream = meterCtx = meterRaf = null;
-  $('meterBar').style.width = '0';
+  if (stopTestMeter) { stopTestMeter(); stopTestMeter = null; }
   $('testBtn').textContent = 'テスト開始';
 }
 
