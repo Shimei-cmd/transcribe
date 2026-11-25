@@ -117,7 +117,8 @@
 <!-- 3: 要約 -->
 <section id="t3">
   <div class="card">
-    <div>要約するファイル(文字起こし/校正)</div>
+    <div>要約する校正済みファイル(Googleドキュメント)</div>
+    <div class="devlist" style="margin:0 0 4px">CMなど不要な部分は、先に校正済みのGoogleドキュメントを開いて削除しておくと、要約の精度が上がります</div>
     <select id="sumFile"></select>
     <button class="plain" onclick="loadFiles('sum')">更新</button><br>
     <button id="sumBtn" class="primary" onclick="doSummary()">要約</button>
@@ -173,12 +174,14 @@
       <li><b>処理はサーバー(GAS)が裏で行う</b>:ボタンを押すと受付だけ行い、GASが順番に処理する。画面・タブを閉じても、PCの電源を切っても処理は続く</li>
       <li>完了・エラーは<b>メールで通知</b>(GASを作ったGoogleアカウント宛て)。画面の「処理状況」でも進み具合を確認できる</li>
       <li>Geminiが混雑している場合は、1分→3分→5分→10分…と間隔を延ばして自動で再試行(最大約2時間)。その他の失敗は1分おいて3回まで再試行</li>
-      <li>保存ファイル名:<b>日時+校正</b>(テキストファイル)</li>
+      <li>結果は<b>Googleドキュメント</b>で作成(CMなど不要な部分を自由に削除・編集できる)。保存ファイル名:<b>日時+校正</b></li>
+      <li>失敗した場合、途中まで作ったファイルは自動でゴミ箱へ移し、一覧に表示しない</li>
     </ul>
 
     <h3>4. 要約の仕様(後日)</h3>
     <ul>
-      <li>文字起こし、または校正済みのファイルを選び、全文をGeminiに渡して要約する(校正と同じくサーバーで裏処理し、完了をメール通知)</li>
+      <li><b>校正済みのファイル(Googleドキュメント)</b>だけを選べる。編集した内容がそのまま要約に反映される。全文をGeminiに渡して要約(サーバーで裏処理し、完了をメール通知)</li>
+      <li>【CM?】の印が付いた行は要約に含めない</li>
       <li>要約の構成:<b>概要/主な議題と議論内容/決定事項/ToDo・宿題(担当者・期限が分かれば)/次回予定・その他</b>。該当がない項目は「特になし」</li>
       <li>結果は見出し・箇条書きに整えた<b>Googleドキュメント</b>として作成</li>
       <li>保存ファイル名:<b>日時+要約</b></li>
@@ -188,7 +191,8 @@
     <ul>
       <li>3種類のファイルは、すべてGoogleドライブの「リアルタイム文字起こし」フォルダに保存。ファイル名の先頭の日時で、同じ会議のファイルがまとまる</li>
       <li>各処理の完了時に表示されるリンクから、すぐに開ける</li>
-      <li>Googleドキュメントの要約は、そのまま共有・印刷・Word/PDFでのダウンロードができる</li>
+      <li>ファイル形式:文字起こし=テキストファイル/校正=Googleドキュメント/要約=Googleドキュメント</li>
+      <li>校正・要約のGoogleドキュメントは、そのまま編集・共有・印刷・Word/PDFでのダウンロードができる</li>
     </ul>
 
     <h3>注意事項</h3>
@@ -229,12 +233,13 @@
       <li>「2: Geminiで校正」タブ → 文字起こしファイルを選ぶ(新しい順)</li>
       <li>「校正」を押すと受付される。<b>画面を閉じても処理は続く</b></li>
       <li>進み具合は下の「処理状況」に表示(15秒ごとに自動更新)。完了するとメールが届く</li>
-      <li>メールか「処理状況」のリンクから「日時+校正」ファイルを開く</li>
+      <li>メールか「処理状況」のリンクから「日時+校正」のGoogleドキュメントを開く</li>
     </ol>
 
     <h3>要約(後日)</h3>
     <ol>
-      <li>「3: 内容を要約」タブ → 文字起こし、または校正ファイルを選ぶ(校正済みの方が要約の精度が上がる)</li>
+      <li>必要なら、校正済みのGoogleドキュメントを開いてCMなど不要な部分を削除しておく</li>
+      <li>「3: 内容を要約」タブ → 校正済みファイルを選ぶ(同じ名前が複数あるときは「更新」日時で区別)</li>
       <li>「要約」を押すと受付される(画面を閉じても処理は続く)</li>
       <li>完了するとメールが届く。メールか「処理状況」のリンクから「日時+要約」のGoogleドキュメントを開く</li>
     </ol>
@@ -741,10 +746,11 @@ async function loadFiles(kind) {
   const sel = $(kind === 'proof' ? 'proofFile' : 'sumFile');
   sel.innerHTML = '<option>読み込み中...</option>';
   try {
-    const list = await api('listFiles', { kinds: kind === 'proof' ? ['文字起こし'] : ['文字起こし', '校正'] });
+    const list = await api('listFiles', { kind: kind === 'proof' ? 'transcript' : 'proofed' });
+    const fmt = ms => { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
     sel.innerHTML = list.length
-      ? list.map(f => `<option value="${f.id}">${f.name}</option>`).join('')
-      : '<option value="">ファイルがありません</option>';
+      ? list.map(f => `<option value="${f.id}">${f.name}${kind === 'sum' ? `(更新 ${fmt(f.updated)})` : ''}</option>`).join('')
+      : `<option value="">${kind === 'proof' ? '文字起こしファイルがありません' : '校正済みのファイルがありません(先に校正してください)'}</option>`;
   } catch (e) {
     sel.innerHTML = `<option value="">読み込み失敗: ${e.message}</option>`;
   }
