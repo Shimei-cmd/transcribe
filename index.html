@@ -52,7 +52,13 @@
 <!-- 1: 文字起こし -->
 <section id="t1" class="active">
   <div class="card">
-    <div id="audioStatus" class="status" style="margin:0 0 10px">音声入力を確認中...</div>
+    <label style="font-size:14px">音声の取り込み方法<br>
+      <select id="srcMode" onchange="onModeChange()">
+        <option value="share">会議の音声を直接取り込む(おすすめ・PCの設定不要・音量に影響されない)</option>
+        <option value="device">音声入力デバイスから(ステレオミキサー等)</option>
+      </select>
+    </label>
+    <div id="audioStatus" class="status" style="margin:8px 0 10px">音声入力を確認中...</div>
     <button id="startBtn" class="primary">スタート</button>
     <button id="stopBtn" class="danger" disabled>終了</button>
     <button class="plain" onclick="openAudioPanel()">音声設定</button>
@@ -205,6 +211,22 @@ interimSpan.className = 'interim';
 $('log').appendChild(interimSpan);
 
 let lineCount = 0, lastLineTime = '';
+let shareStream = null;
+
+const SHARE_HELP = `<span class="ok">会議の音声を直接取り込みます(PCの音声設定は不要)</span><br>
+  スタートを押すと共有画面が出ます。<b>ブラウザで会議中</b>なら「タブ」で会議のタブを選び「タブの音声も共有」をオン。
+  <b>Zoom・Teamsなどのアプリ</b>なら「画面全体」を選び「システムの音声も共有」をオン →「共有」。`;
+
+function srcMode() { return $('srcMode').value; }
+function onModeChange() {
+  try { localStorage.setItem('transcribeSrc', srcMode()); } catch (e) {}
+  if (srcMode() === 'share') {
+    $('audioStatus').innerHTML = SHARE_HELP;
+    $('audioPanel').style.display = 'none';
+  } else {
+    checkAudio(false);
+  }
+}
 function nearBottom() { const l = $('log'); return l.scrollHeight - l.scrollTop - l.clientHeight < 60; }
 function updateMonInfo() {
   $('monInfo').textContent = running || lineCount ? `${lineCount}行` + (lastLineTime ? ` / 最終認識 ${lastLineTime}` : '') : '';
@@ -224,8 +246,31 @@ async function start() {
   if (!SR) { setStatus('このブラウザは音声認識に未対応です。Chromeを使用してください', true); return; }
 
   stopMeter();
-  if (audioState === 'ok') $('audioPanel').style.display = 'none';
+  const mode = srcMode();
+  if (mode === 'share' || audioState === 'ok') $('audioPanel').style.display = 'none';
   else if (audioState !== 'unknown') $('audioPanel').style.display = 'block';
+
+  // 会議の音声を直接取り込む:共有する画面/タブを選んでもらう
+  let track = null;
+  if (mode === 'share') {
+    try {
+      shareStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        systemAudio: 'include',
+      });
+    } catch (e) {
+      setStatus('共有がキャンセルされました。もう一度スタートを押してください', true);
+      return;
+    }
+    track = shareStream.getAudioTracks()[0];
+    if (!track) {
+      shareStream.getTracks().forEach(t => t.stop()); shareStream = null;
+      setStatus('音声が共有されていません。共有画面で「音声を共有」(タブの場合「タブの音声も共有」)をオンにしてください', true);
+      return;
+    }
+    shareStream.getTracks().forEach(t => t.onended = () => stop('共有が終了したため停止しました'));
+  }
   $('startBtn').disabled = true;
   setStatus('準備中...');
   try {
@@ -238,7 +283,7 @@ async function start() {
 
     running = true;
     startTime = lastVoice = Date.now();
-    startRecognition(SR);
+    startRecognition(SR, track);
     timerId = setInterval(tick, 1000);
     flushId = setInterval(flushText, FLUSH_INTERVAL_MS);
 
@@ -247,28 +292,31 @@ async function start() {
     setStatus('文字起こし中');
     lineCount = 0; lastLineTime = ''; updateMonInfo();
     try {
-      stopLiveMeter = await createMeter($('liveBar'), $('liveLabel'));
+      stopLiveMeter = await createMeter($('liveBar'), $('liveLabel'), shareStream);
       $('liveLevel').style.display = 'flex';
     } catch (e) {}
     $('log').scrollIntoView({ behavior: 'smooth', block: 'center' });
   } catch (e) {
+    running = false;
+    if (shareStream) { shareStream.getTracks().forEach(t => t.stop()); shareStream = null; }
     $('startBtn').disabled = false;
     setStatus('開始できません: ' + e.message, true);
   }
 }
 
-function startRecognition(SR) {
-  rec = new SR();
-  rec.lang = 'ja-JP';
-  rec.continuous = true;
-  rec.interimResults = true;
+// track を渡すとその音声(共有した画面/タブの音)を認識、無ければ既定の音声入力を認識
+function startRecognition(SR, track) {
+  const r = new SR();
+  r.lang = 'ja-JP';
+  r.continuous = true;
+  r.interimResults = true;
 
-  rec.onresult = e => {
+  r.onresult = e => {
     let interim = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {
-      const r = e.results[i];
-      if (r.isFinal) {
-        const t = r[0].transcript.trim();
+      const res = e.results[i];
+      if (res.isFinal) {
+        const t = res[0].transcript.trim();
         if (t) {
           const line = `[${clock(new Date())}] ${t}`;
           appendLog(line);
@@ -276,7 +324,7 @@ function startRecognition(SR) {
           lastVoice = Date.now();
         }
       } else {
-        interim += r[0].transcript;
+        interim += res[0].transcript;
       }
     }
     const stick = nearBottom();
@@ -285,21 +333,26 @@ function startRecognition(SR) {
     if (interim) lastVoice = Date.now();
   };
 
-  rec.onerror = e => {
+  r.onerror = e => {
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-      stop('マイク(音声入力)の使用が許可されていません', true);
+      stop('音声認識の使用が許可されていません', true);
     } else if (e.error === 'audio-capture') {
-      stop('音声入力デバイスが見つかりません。ステレオミキサー等の設定を確認してください', true);
+      stop(track ? '共有した音声を取り込めません' : '音声入力デバイスが見つかりません。ステレオミキサー等の設定を確認してください', true);
     }
     // no-speech / network などは onend で自動再開
   };
 
-  // 音声認識は無音などで自動停止するため、実行中は再開し続ける
-  rec.onend = () => {
-    if (running && rec) setTimeout(() => { try { rec.start(); } catch (e) {} }, 300);
+  // 音声認識は無音などで自動停止するため、実行中は新しく作り直して再開し続ける
+  r.onend = () => {
+    if (running && rec === r) setTimeout(() => {
+      if (!running || rec !== r) return;
+      if (track && track.readyState !== 'live') { stop('共有が終了したため停止しました'); return; }
+      try { startRecognition(SR, track); } catch (err) {}
+    }, 300);
   };
 
-  rec.start();
+  rec = r;
+  if (track) r.start(track); else r.start();
 }
 
 function tick() {
@@ -317,6 +370,7 @@ async function stop(msg, isErr) {
   $('dot').classList.remove('on');
   interimSpan.textContent = '';
   if (stopLiveMeter) { stopLiveMeter(); stopLiveMeter = null; }
+  if (shareStream) { const st = shareStream; shareStream = null; st.getTracks().forEach(t => { t.onended = null; t.stop(); }); }
   $('liveLevel').style.display = 'none';
   setStatus('保存中...');
 
@@ -472,8 +526,9 @@ function levelPct(rms) {
 }
 
 // 既定の入力デバイスの音量メーターを動かす(戻り値: 停止用の関数)
-async function createMeter(bar, label) {
-  const stream = await navigator.mediaDevices.getUserMedia({
+async function createMeter(bar, label, srcStream) {
+  const own = !srcStream;
+  const stream = srcStream || await navigator.mediaDevices.getUserMedia({
     audio: { deviceId: 'default', echoCancellation: false, noiseSuppression: false, autoGainControl: false }
   });
   const ctx = new AudioContext();
@@ -494,7 +549,7 @@ async function createMeter(bar, label) {
   draw();
   return () => {
     if (raf) cancelAnimationFrame(raf);
-    stream.getTracks().forEach(t => t.stop());
+    if (own) stream.getTracks().forEach(t => t.stop());
     ctx.close();
     bar.style.width = '0';
     if (label) label.textContent = '';
@@ -522,8 +577,9 @@ function stopMeter() {
 if (!loadCfg().url) document.querySelector('.tab[data-t="t4"]').click();
 
 // 起動時に自動チェック、デバイスが変わったら再チェック
-checkAudio(false);
-if (navigator.mediaDevices) navigator.mediaDevices.ondevicechange = () => checkAudio(false);
+try { $('srcMode').value = localStorage.getItem('transcribeSrc') || 'share'; } catch (e) {}
+onModeChange();
+if (navigator.mediaDevices) navigator.mediaDevices.ondevicechange = () => { if (srcMode() === 'device') checkAudio(false); };
 
 // ===== 2: 校正 =====
 async function loadFiles(kind) {
