@@ -23,6 +23,16 @@
   .bar{height:100%;width:0;background:#188038;transition:width .05s}
   .lvl{display:flex;align-items:center;gap:10px;margin-top:10px;font-size:13px}
   .lvl .meter{flex:1;margin:0}
+  .doc{font-size:14px;line-height:1.85}
+  .doc h3{margin:18px 0 6px;font-size:16px;border-left:4px solid #1a73e8;padding-left:8px}
+  .doc h3:first-child{margin-top:0}
+  .doc ul,.doc ol{margin:4px 0 8px;padding-left:22px}
+  .doc table{border-collapse:collapse;width:100%;margin:6px 0 10px;font-size:13px}
+  .doc th,.doc td{border:1px solid #dadce0;padding:6px 8px;text-align:left;vertical-align:top}
+  .doc th{background:#f1f3f4;white-space:nowrap}
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0 12px}
+  .flow div{background:#e8f0fe;border:1px solid #c6dafc;border-radius:6px;padding:6px 10px;font-size:13px;text-align:center}
+  .flow span{color:#5f6368}
   .monhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:14px}
   .status{margin-top:10px;font-size:14px}
   .err{color:#d93025}
@@ -46,6 +56,8 @@
   <div class="tab active" data-t="t1">1: 文字起こし</div>
   <div class="tab" data-t="t2">2: Geminiで校正</div>
   <div class="tab" data-t="t3">3: 内容を要約</div>
+  <div class="tab" data-t="t5">システムの特徴</div>
+  <div class="tab" data-t="t6">使い方</div>
   <div class="tab" data-t="t4">初期設定</div>
 </div>
 
@@ -106,6 +118,128 @@
     <button class="plain" onclick="loadFiles('sum')">更新</button><br>
     <button id="sumBtn" class="primary" onclick="doSummary()">要約</button>
     <div id="sumResult" class="status"></div>
+  </div>
+</section>
+
+<!-- システムの特徴 -->
+<section id="t5">
+  <div class="card doc">
+    <h3>全体の仕組み</h3>
+    <div class="flow">
+      <div>会議・動画の音声</div><span>→</span>
+      <div>この画面(Chrome)<br>音声認識で文字に</div><span>→</span>
+      <div>GAS<br>受け取って保存</div><span>→</span>
+      <div>Googleドライブ<br>文字起こしファイル</div><span>→</span>
+      <div>Gemini<br>校正・要約</div>
+    </div>
+    <table>
+      <tr><th>部分</th><th>役割</th><th>費用</th></tr>
+      <tr><td>画面(GitHub Pages)</td><td>この画面。音声の取り込み・文字起こし・操作を行う。URLを開くだけでどのPCでも使える</td><td>無料</td></tr>
+      <tr><td>GAS(Google Apps Script)</td><td>文字起こしの保存、校正・要約の実行、ファイル作成</td><td>無料</td></tr>
+      <tr><td>Googleドライブ</td><td>GASを作ったアカウントの「リアルタイム文字起こし」フォルダにすべて保存</td><td>無料(容量の範囲内)</td></tr>
+      <tr><td>Gemini API</td><td>校正・要約を行うAI(gemini-2.5-flash)</td><td>無料枠を使用</td></tr>
+    </table>
+
+    <h3>1. 音声の取り込み方</h3>
+    <table>
+      <tr><th>方式</th><th>内容</th><th>特徴</th></tr>
+      <tr><td>会議の音声を直接取り込む<br>(標準)</td><td>スタート時にChromeの共有機能で、会議のタブ、または画面全体を選び、その音声を直接受け取る</td><td>PCの設定・インストール不要。Windowsの音量(イヤホンの音量)に影響されない。タブ共有なら会議の音だけを拾う</td></tr>
+      <tr><td>音声入力デバイスから<br>(予備)</td><td>Windowsの既定の録音デバイス(ステレオミキサー等)の音を受け取る</td><td>PCごとに設定が必要。Windowsの音量が小さいと拾いにくい。起動時に自動チェックし、未設定なら手順を表示</td></tr>
+    </table>
+
+    <h3>2. 文字起こしの仕組み(リアルタイム)</h3>
+    <ul>
+      <li>Chromeに組み込まれた音声認識(Web Speech API・Googleの音声認識)で、日本語の音声を文字にする</li>
+      <li>話している途中の言葉は「認識中:」として青色で表示し、文が確定すると時刻付き(例:[14:05:12])で1行ずつ追加</li>
+      <li>確定した文は約5秒ごとにGASへ送り、Googleドライブのテキストファイルに追記していく(途中で止まっても、それまでの分は保存済み)</li>
+      <li>無音などで音声認識が止まっても自動で再開する</li>
+      <li>終了ボタンで終了。1時間音声がない場合は自動で終了</li>
+      <li>保存ファイル名:<b>文字起こしを開始した日時+文字起こし</b>(例:202611251400文字起こし)</li>
+    </ul>
+
+    <h3>3. 校正の仕組み(後日)</h3>
+    <ul>
+      <li>文字起こしファイルを選び、Gemini(AI)で校正する</li>
+      <li>校正のルール:誤変換・同音異義語・聞き間違いを文脈から修正/「えー」「あの」などのつなぎ言葉や言い直しを削除/句読点を補って読みやすく/<b>内容の追加・削除・要約はしない</b>/時刻はそのまま残す</li>
+      <li>長い文字起こしは約20,000文字ずつに分けて順番に処理する(何時間の会議でも処理できる)</li>
+      <li>混雑などで失敗した場合は、30秒おいて自動で2回まで再試行</li>
+      <li>保存ファイル名:<b>日時+校正</b>(テキストファイル)</li>
+    </ul>
+
+    <h3>4. 要約の仕様(後日)</h3>
+    <ul>
+      <li>文字起こし、または校正済みのファイルを選び、全文をGeminiに渡して要約する</li>
+      <li>要約の構成:<b>概要/主な議題と議論内容/決定事項/ToDo・宿題(担当者・期限が分かれば)/次回予定・その他</b>。該当がない項目は「特になし」</li>
+      <li>結果は見出し・箇条書きに整えた<b>Googleドキュメント</b>として作成</li>
+      <li>保存ファイル名:<b>日時+要約</b></li>
+    </ul>
+
+    <h3>5. 結果の扱い</h3>
+    <ul>
+      <li>3種類のファイルは、すべてGoogleドライブの「リアルタイム文字起こし」フォルダに保存。ファイル名の先頭の日時で、同じ会議のファイルがまとまる</li>
+      <li>各処理の完了時に表示されるリンクから、すぐに開ける</li>
+      <li>Googleドキュメントの要約は、そのまま共有・印刷・Word/PDFでのダウンロードができる</li>
+    </ul>
+
+    <h3>注意事項</h3>
+    <ul>
+      <li>使えるブラウザ:パソコン版のChrome(またはEdge)。インターネット接続が必要</li>
+      <li>話者(誰が話したか)は区別しない。BGMや同時発話が多いと精度が下がる</li>
+      <li>Gemini APIの無料枠では、送った内容がGoogleのサービス改善に使われることがある。社外秘の会議では注意</li>
+      <li>専用URLにはトークン(鍵)が含まれる。他人に教えない</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 使い方 -->
+<section id="t6">
+  <div class="card doc">
+    <h3>はじめて使うPCで</h3>
+    <ol>
+      <li>ブックマークした<b>専用URL</b>をChromeで開く(初期設定が自動で入る)</li>
+      <li>専用URLが無い場合は「初期設定」タブで、GASのURLとトークンを入力して「保存して接続テスト」</li>
+    </ol>
+
+    <h3>リアルタイム文字起こし</h3>
+    <ol>
+      <li>「1: 文字起こし」タブを開く</li>
+      <li>「音声の取り込み方法」は「会議の音声を直接取り込む」のまま</li>
+      <li>「スタート」を押すと共有画面が出るので、
+        <ul>
+          <li><b>ブラウザで会議・YouTube等</b>:「タブ」→ 対象のタブを選ぶ →「タブの音声も共有」をオン →「共有」</li>
+          <li><b>Zoom・Teamsなどのアプリ</b>:「画面全体」を選ぶ →「システムの音声も共有」をオン →「共有」</li>
+        </ul>
+      </li>
+      <li>「文字起こしモニター」に文字が出ることを確認。「入力レベル」が動いていれば音を受け取れている</li>
+      <li>終わったら「終了」(Chromeの「共有を停止」でも終了)。「保存先」のリンクからファイルを開ける</li>
+    </ol>
+
+    <h3>校正(後日)</h3>
+    <ol>
+      <li>「2: Geminiで校正」タブ → 文字起こしファイルを選ぶ(新しい順)</li>
+      <li>「校正」を押す。進み具合「校正中... 1 / 3」が表示される。<b>完了までタブを閉じない</b></li>
+      <li>完了したらリンクから「日時+校正」ファイルを開く</li>
+    </ol>
+
+    <h3>要約(後日)</h3>
+    <ol>
+      <li>「3: 内容を要約」タブ → 文字起こし、または校正ファイルを選ぶ(校正済みの方が要約の精度が上がる)</li>
+      <li>「要約」を押す(1〜数分)</li>
+      <li>完了したらリンクから「日時+要約」のGoogleドキュメントを開く</li>
+    </ol>
+
+    <h3>困ったとき</h3>
+    <table>
+      <tr><th>症状</th><th>対処</th></tr>
+      <tr><td>文字が出ない</td><td>共有時に「タブの音声も共有」/「システムの音声も共有」をオンにしたか確認。対象の音(会議・動画)がミュートになっていないか確認</td></tr>
+      <tr><td>「共有がキャンセルされました」</td><td>共有画面で「共有」を押さずに閉じた。もう一度スタート</td></tr>
+      <tr><td>「初期設定(URLとトークン)が未入力です」</td><td>専用URLから開き直すか、「初期設定」タブで入力</td></tr>
+      <tr><td>「GASから正しい応答がありません」</td><td>GASのデプロイのアクセスが「全員」か、URLが /exec で終わっているか確認</td></tr>
+      <tr><td>「トークンが一致しません」</td><td>トークンを入れ直す(GASで setup を実行するとログに表示)</td></tr>
+      <tr><td>校正・要約で「Gemini API が混雑しています」「429」</td><td>無料枠の回数制限。時間をおいて再実行</td></tr>
+      <tr><td>校正・要約で「GEMINI_API_KEY が未設定です」</td><td>GASのスクリプト プロパティに GEMINI_API_KEY を登録</td></tr>
+      <tr><td>画面が古いまま</td><td>Ctrl+F5 で再読み込み</td></tr>
+    </table>
   </div>
 </section>
 
