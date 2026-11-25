@@ -172,7 +172,7 @@
       <li>長い文字起こしは約20,000文字ずつに分けて順番に処理する(何時間の会議でも処理できる)</li>
       <li><b>処理はサーバー(GAS)が裏で行う</b>:ボタンを押すと受付だけ行い、GASが順番に処理する。画面・タブを閉じても、PCの電源を切っても処理は続く</li>
       <li>完了・エラーは<b>メールで通知</b>(GASを作ったGoogleアカウント宛て)。画面の「処理状況」でも進み具合を確認できる</li>
-      <li>混雑などで失敗した場合は、1分おいて自動で再試行(3回まで)</li>
+      <li>Geminiが混雑している場合は、1分→3分→5分→10分…と間隔を延ばして自動で再試行(最大約2時間)。その他の失敗は1分おいて3回まで再試行</li>
       <li>保存ファイル名:<b>日時+校正</b>(テキストファイル)</li>
     </ul>
 
@@ -358,6 +358,12 @@ $('log').appendChild(interimSpan);
 
 let lineCount = 0, lastLineTime = '';
 let shareStream = null;
+let segStart = null;
+
+// 日本語の単語の間に入る不要な空白を詰める(英単語どうしの空白は残す)
+function cleanText(t) {
+  return String(t || '').replace(/(?<=[^\x00-\x7F]) +| +(?=[^\x00-\x7F])/g, '').trim();
+}
 
 const SHARE_HELP = `<span class="ok">会議の音声を直接取り込みます(PCの音声設定は不要)</span><br>
   スタートを押すと共有画面が出ます。<b>ブラウザで会議中</b>なら「タブ」で会議のタブを選び「タブの音声も共有」をオン。
@@ -459,18 +465,20 @@ function startRecognition(SR, track) {
 
   r.onresult = e => {
     let interim = '';
+    if (!segStart) segStart = new Date(); // 話し始めの時刻を記録
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const res = e.results[i];
       if (res.isFinal) {
-        const t = res[0].transcript.trim();
+        const t = cleanText(res[0].transcript);
         if (t) {
-          const line = `[${clock(new Date())}] ${t}`;
+          const line = `[${clock(segStart || new Date())}] ${t}`;
+          segStart = null;
           appendLog(line);
           pending += line + '\n';
           lastVoice = Date.now();
         }
       } else {
-        interim += res[0].transcript;
+        interim += cleanText(res[0].transcript);
       }
     }
     const stick = nearBottom();
@@ -488,13 +496,14 @@ function startRecognition(SR, track) {
     // no-speech / network などは onend で自動再開
   };
 
-  // 音声認識は無音などで自動停止するため、実行中は新しく作り直して再開し続ける
+  // 音声認識は無音などで自動停止するため、実行中は新しく作り直してすぐ再開する
   r.onend = () => {
+    segStart = null;
     if (running && rec === r) setTimeout(() => {
       if (!running || rec !== r) return;
       if (track && track.readyState !== 'live') { stop('共有が終了したため停止しました'); return; }
       try { startRecognition(SR, track); } catch (err) {}
-    }, 300);
+    }, 50);
   };
 
   rec = r;
@@ -770,7 +779,7 @@ function renderJobs(jobs) {
   const fmt = ms => { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
   const state = j => {
     if (j.status === 'waiting') return '待機中(1〜2分で開始)';
-    if (j.status === 'running') return j.type === 'proof' && j.total ? `処理中 ${j.index} / ${j.total}` : '処理中';
+    if (j.status === 'running') return (j.type === 'proof' && j.total ? `処理中 ${j.index} / ${j.total}` : '処理中') + (j.note ? `<br><span class="warn">${esc(j.note)}</span>` : '');
     if (j.status === 'done') return `<span class="ok">完了</span> <a href="${esc(j.url)}" target="_blank">${esc(j.outName)}</a>`;
     return `<span class="err">エラー: ${esc(j.error)}</span>`;
   };
