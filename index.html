@@ -56,6 +56,7 @@
   <div class="tab active" data-t="t1">1: 文字起こし</div>
   <div class="tab" data-t="t2">2: Geminiで校正</div>
   <div class="tab" data-t="t3">3: 内容を要約</div>
+  <div class="tab" data-t="t7">辞書</div>
   <div class="tab" data-t="t5">システムの特徴</div>
   <div class="tab" data-t="t6">使い方</div>
   <div class="tab" data-t="t4">初期設定</div>
@@ -130,6 +131,21 @@
   </div>
 </section>
 
+<!-- 辞書 -->
+<section id="t7">
+  <div class="card">
+    <div class="monhead"><b>辞書(固有名詞・専門用語の正しい書き方)</b>
+      <span><button class="plain" onclick="loadDict()">読み込み</button><button id="dictSave" class="primary" onclick="saveDict()">保存</button></span></div>
+    <div class="devlist" style="margin:0 0 8px">
+      <b>[置換]</b> 「誤→正」… 文字起こしの保存時に自動で置き換え、校正でもGeminiに伝える/語だけの行 … 正しい表記の用語としてGeminiに伝える<br>
+      <b>[読み]</b> 「読み→漢字」… 校正でGeminiが文脈を見て、ひらがな・誤変換をこの漢字に直す(一般語と同じ読みの語は機械的に置き換えない)<br>
+      # で始まる行は無視。保存先:Googleドライブ「リアルタイム文字起こし」フォルダの「辞書」
+    </div>
+    <textarea id="dictText" spellcheck="false" style="width:100%;height:440px;box-sizing:border-box;font-family:Consolas,'MS Gothic',monospace;font-size:14px;line-height:1.6;padding:10px;border:1px solid #dadce0;border-radius:6px"></textarea>
+    <div id="dictResult" class="status"></div>
+  </div>
+</section>
+
 <!-- システムの特徴 -->
 <section id="t5">
   <div class="card doc">
@@ -170,7 +186,7 @@
     <ul>
       <li>文字起こしファイルを選び、Gemini(AI)で校正する</li>
       <li>校正のルール:誤変換・同音異義語・聞き間違いを文脈から修正/「えー」「あの」などのつなぎ言葉や言い直しを削除/句読点を補って読みやすく/<b>内容の追加・削除・要約はしない</b>/時刻はそのまま残す</li>
-      <li>長い文字起こしは約20,000文字ずつに分けて順番に処理する(何時間の会議でも処理できる)</li>
+      <li>文字起こしを約6,000文字ずつに分け、4つずつ同時にGeminiへ送って処理する(速く、何時間の会議でも処理できる)。モデルは速くて無料枠の大きい flash-lite を優先して自動で選ぶ</li>
       <li><b>処理はサーバー(GAS)が裏で行う</b>:ボタンを押すと受付だけ行い、GASが順番に処理する。画面・タブを閉じても、PCの電源を切っても処理は続く</li>
       <li>完了・エラーは<b>メールで通知</b>(GASを作ったGoogleアカウント宛て)。画面の「処理状況」でも進み具合を確認できる</li>
       <li>Geminiが混雑している場合は、1分→3分→5分→10分…と間隔を延ばして自動で再試行(最大約2時間)。その他の失敗は1分おいて3回まで再試行</li>
@@ -186,6 +202,14 @@
       <li>要約の構成:<b>概要/主な議題と議論内容/決定事項/ToDo・宿題(担当者・期限が分かれば)/次回予定・その他</b>。該当がない項目は「特になし」</li>
       <li>結果は見出し・箇条書きに整えた<b>Googleドキュメント</b>として作成</li>
       <li>保存ファイル名:<b>日時+要約</b></li>
+    </ul>
+
+    <h3>辞書</h3>
+    <ul>
+      <li>「辞書」タブで、人名・社名・専門用語などの正しい書き方を登録できる(Googleドライブの「辞書」ファイルに保存)</li>
+      <li>[置換](誤→正):文字起こしの保存時に自動で置き換え、校正時にもGeminiに伝える</li>
+      <li>[読み](読み→漢字):校正時にGeminiが文脈を見て、ひらがなや誤変換を正しい漢字に直す</li>
+      <li>登録した用語は要約でも正しい表記として使われる</li>
     </ul>
 
     <h3>5. 結果の扱い</h3>
@@ -245,6 +269,13 @@
       <li>完了するとメールが届く。メールか「処理状況」のリンクから「日時+要約」のGoogleドキュメントを開く</li>
     </ol>
 
+    <h3>辞書の登録</h3>
+    <ol>
+      <li>「辞書」タブを開く</li>
+      <li>[置換] の下に「誤→正」(例:注射状→駐車場)、[読み] の下に「読み→漢字」(例:はんだはるひさ→半田晴久)を1行ずつ書く。正しい表記だけを書いた行も可</li>
+      <li>「保存」を押す。次の文字起こし・校正・要約から使われる</li>
+    </ol>
+
     <h3>困ったとき</h3>
     <table>
       <tr><th>症状</th><th>対処</th></tr>
@@ -256,6 +287,7 @@
       <tr><td>校正・要約で「Gemini API が混雑しています」「429」</td><td>無料枠の回数制限。時間をおいて再実行</td></tr>
       <tr><td>校正・要約で「GEMINI_API_KEY が未設定です」</td><td>GASのスクリプト プロパティに GEMINI_API_KEY を登録</td></tr>
       <tr><td>処理状況が「待機中」のまま5分以上変わらない</td><td>GASのエディタで setup を実行し、承認画面が出たら許可する(コードを更新した後に必要)</td></tr>
+      <tr><td>校正・要約を途中でやめたい</td><td>「処理状況」の該当行の「中止」ボタンを押す(途中まで作ったファイルは削除)</td></tr>
       <tr><td>画面が古いまま</td><td>Ctrl+F5 で再読み込み</td></tr>
     </table>
   </div>
@@ -345,6 +377,7 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   $(t.dataset.t).classList.add('active');
   if (t.dataset.t === 't2') { loadFiles('proof'); refreshJobs(); }
   if (t.dataset.t === 't3') { loadFiles('sum'); refreshJobs(); }
+  if (t.dataset.t === 't7' && !$('dictText').value) loadDict();
   if (t.dataset.t === 't4') { const c = loadCfg(); $('cfgUrl').value = c.url || ''; $('cfgToken').value = c.token || ''; $('shareUrl').value = buildShareUrl(); }
 });
 
@@ -757,6 +790,25 @@ async function loadFiles(kind) {
   }
 }
 
+// ===== 辞書 =====
+async function loadDict() {
+  $('dictResult').className = 'status';
+  $('dictResult').textContent = '読み込み中...';
+  try { $('dictText').value = await api('getDict'); $('dictResult').textContent = ''; }
+  catch (e) { $('dictResult').className = 'status err'; $('dictResult').textContent = '読み込めませんでした: ' + e.message; }
+}
+async function saveDict() {
+  $('dictSave').disabled = true;
+  $('dictResult').className = 'status';
+  $('dictResult').textContent = '保存中...';
+  try {
+    await api('saveDict', { text: $('dictText').value });
+    $('dictResult').innerHTML = '<span class="ok">【保存しました】次の文字起こし・校正・要約から使われます</span>';
+  } catch (e) {
+    $('dictResult').className = 'status err'; $('dictResult').textContent = '保存できませんでした: ' + e.message;
+  } finally { $('dictSave').disabled = false; }
+}
+
 // ===== 2・3: 校正・要約(サーバーで裏処理) =====
 const esc = t => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 let jobTimer = null;
@@ -788,15 +840,24 @@ function renderJobs(jobs) {
     if (j.status === 'waiting') return '待機中(1〜2分で開始)';
     if (j.status === 'running') return (j.type === 'proof' && j.total ? `処理中 ${j.index} / ${j.total}` : '処理中') + (j.note ? `<br><span class="warn">${esc(j.note)}</span>` : '');
     if (j.status === 'done') return `<span class="ok">完了</span> <a href="${esc(j.url)}" target="_blank">${esc(j.outName)}</a>`;
+    if (j.status === 'canceled') return '中止しました';
     return `<span class="err">エラー: ${esc(j.error)}</span>`;
   };
+  const act = j => (j.status === 'waiting' || j.status === 'running')
+    ? `<button class="plain" style="padding:4px 12px;font-size:13px;margin:0" onclick="cancelJob('${j.id}')">中止</button>` : '';
   const html = jobs.length
-    ? '<table class="doc" style="font-size:13px"><tr><th>受付</th><th>種類</th><th>元ファイル</th><th>状態・結果</th></tr>' +
-      jobs.map(j => `<tr><td>${fmt(j.created)}</td><td>${j.type === 'proof' ? '校正' : '要約'}</td><td>${esc(j.srcName)}</td><td>${state(j)}</td></tr>`).join('') +
+    ? '<table class="doc" style="font-size:13px"><tr><th>受付</th><th>種類</th><th>元ファイル</th><th>状態・結果</th><th></th></tr>' +
+      jobs.map(j => `<tr><td>${fmt(j.created)}</td><td>${j.type === 'proof' ? '校正' : '要約'}</td><td>${esc(j.srcName)}</td><td>${state(j)}</td><td>${act(j)}</td></tr>`).join('') +
       '</table>'
     : '受付した処理はありません';
   ['jobs2', 'jobs3'].forEach(id => { const el = $(id); if (el) el.innerHTML = html; });
   if (jobs.some(j => j.status === 'waiting' || j.status === 'running')) startJobPolling(); else stopJobPolling();
+}
+
+async function cancelJob(id) {
+  if (!confirm('この処理を中止しますか？(途中まで作ったファイルは削除されます)')) return;
+  try { renderJobs(await api('cancel', { jobId: id })); }
+  catch (e) { alert('中止できませんでした: ' + e.message); }
 }
 
 async function refreshJobs() {
