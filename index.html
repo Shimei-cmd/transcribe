@@ -56,6 +56,7 @@
   <div class="tab active" data-t="t1">1: 文字起こし</div>
   <div class="tab" data-t="t2">2: Geminiで校正</div>
   <div class="tab" data-t="t3">3: 内容を要約</div>
+  <div class="tab" data-t="t8">名前付記</div>
   <div class="tab" data-t="t7">辞書</div>
   <div class="tab" data-t="t5">システムの特徴</div>
   <div class="tab" data-t="t6">使い方</div>
@@ -128,6 +129,20 @@
   <div class="card">
     <div class="monhead"><b>処理状況</b><button class="plain" onclick="refreshJobs()">更新</button></div>
     <div id="jobs3" class="devlist" style="margin:0">読み込み中...</div>
+  </div>
+</section>
+
+<!-- 名前付記 -->
+<section id="t8">
+  <div class="card">
+    <div>まとめる会議(日時)</div>
+    <select id="setSel" onchange="suggestFolder()"></select>
+    <button class="plain" onclick="loadSets()">更新</button>
+    <div style="margin-top:12px">新しいフォルダ名</div>
+    <input id="folderName" placeholder="例: 2026-11-25 ISPS表彰式" style="width:100%;font-size:14px;padding:8px;box-sizing:border-box">
+    <div style="margin-top:12px"><button id="moveBtn" class="primary" onclick="doMove()">フォルダを作って移動</button></div>
+    <div class="devlist">選んだ日時の「文字起こし・校正・要約」を、マイドライブ →「リアルタイム文字起こし」の中に作るフォルダへ移動します。同じ名前のフォルダがあれば、そこへ移動します。移動した後も、校正・要約のファイル一覧には表示されます。</div>
+    <div id="moveResult" class="status"></div>
   </div>
 </section>
 
@@ -215,6 +230,7 @@
     <h3>5. 結果の扱い</h3>
     <ul>
       <li>3種類のファイルは、すべてGoogleドライブの「リアルタイム文字起こし」フォルダに保存。ファイル名の先頭の日時で、同じ会議のファイルがまとまる</li>
+      <li>「名前付記」タブで、同じ会議の3つのファイルを、名前を付けた新しいフォルダにまとめて移動できる(移動後に校正・要約しても、結果は同じフォルダに作られる)</li>
       <li>各処理の完了時に表示されるリンクから、すぐに開ける</li>
       <li>ファイル形式:文字起こし=テキストファイル/校正=Googleドキュメント/要約=Googleドキュメント</li>
       <li>校正・要約のGoogleドキュメントは、そのまま編集・共有・印刷・Word/PDFでのダウンロードができる</li>
@@ -267,6 +283,13 @@
       <li>「3: 内容を要約」タブ → 校正済みファイルを選ぶ(同じ名前が複数あるときは「更新」日時で区別)</li>
       <li>「要約」を押すと受付される(画面を閉じても処理は続く)</li>
       <li>完了するとメールが届く。メールか「処理状況」のリンクから「日時+要約」のGoogleドキュメントを開く</li>
+    </ol>
+
+    <h3>名前付記(フォルダにまとめる)</h3>
+    <ol>
+      <li>「名前付記」タブを開き、まとめる会議(日時)を選ぶ。文字起こし・校正・要約のどれがあるか表示される</li>
+      <li>新しいフォルダ名(例:2026-11-25 ISPS表彰式)を入力して「フォルダを作って移動」</li>
+      <li>マイドライブ →「リアルタイム文字起こし」の中にフォルダができ、3つのファイルが移動する。移動後も校正・要約の一覧には【フォルダ名】付きで表示される</li>
     </ol>
 
     <h3>辞書の登録</h3>
@@ -378,6 +401,7 @@ document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
   if (t.dataset.t === 't2') { loadFiles('proof'); refreshJobs(); }
   if (t.dataset.t === 't3') { loadFiles('sum'); refreshJobs(); }
   if (t.dataset.t === 't7' && !$('dictText').value) loadDict();
+  if (t.dataset.t === 't8') loadSets();
   if (t.dataset.t === 't4') { const c = loadCfg(); $('cfgUrl').value = c.url || ''; $('cfgToken').value = c.token || ''; $('shareUrl').value = buildShareUrl(); }
 });
 
@@ -783,12 +807,53 @@ async function loadFiles(kind) {
     const list = await api('listFiles', { kind: kind === 'proof' ? 'transcript' : 'proofed' });
     const fmt = ms => { const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
     sel.innerHTML = list.length
-      ? list.map(f => `<option value="${f.id}">${f.name}${kind === 'sum' ? `(更新 ${fmt(f.updated)})` : ''}</option>`).join('')
+      ? list.map(f => `<option value="${f.id}">${f.folder ? `【${f.folder}】` : ''}${f.name}${kind === 'sum' ? `(更新 ${fmt(f.updated)})` : ''}</option>`).join('')
       : `<option value="">${kind === 'proof' ? '文字起こしファイルがありません' : '校正済みのファイルがありません(先に校正してください)'}</option>`;
   } catch (e) {
     sel.innerHTML = `<option value="">読み込み失敗: ${e.message}</option>`;
   }
 }
+
+// ===== 名前付記 =====
+let setsCache = [];
+async function loadSets() {
+  const sel = $('setSel');
+  sel.innerHTML = '<option>読み込み中...</option>';
+  try {
+    setsCache = await api('sets');
+    sel.innerHTML = setsCache.length
+      ? setsCache.map(x => {
+          const b = x.base, label = `${b.slice(0, 4)}/${b.slice(4, 6)}/${b.slice(6, 8)} ${b.slice(8, 10)}:${b.slice(10, 12)}`;
+          const has = ['文字起こし', '校正', '要約'].map(k => x[k] ? k + (x[k] > 1 ? `×${x[k]}` : '') : `(${k}なし)`).join('・');
+          return `<option value="${b}">${label} ─ ${has}</option>`;
+        }).join('')
+      : '<option value="">移動できるファイルはありません</option>';
+    suggestFolder();
+  } catch (e) {
+    sel.innerHTML = `<option value="">読み込み失敗: ${e.message}</option>`;
+  }
+}
+function suggestFolder() {
+  const b = $('setSel').value;
+  if (b && !$('folderName').dataset.touched) $('folderName').value = `${b.slice(0, 4)}-${b.slice(4, 6)}-${b.slice(6, 8)} `;
+}
+async function doMove() {
+  const base = $('setSel').value, name = $('folderName').value.trim();
+  const out = $('moveResult');
+  if (!base) return;
+  if (!name) { out.className = 'status err'; out.textContent = 'フォルダ名を入力してください'; return; }
+  $('moveBtn').disabled = true;
+  out.className = 'status'; out.textContent = '移動中...';
+  try {
+    const r = await api('moveSet', { base: base, folderName: name });
+    out.innerHTML = `<span class="ok">【完了】${r.moved}個のファイルを移動しました</span> <a href="${r.url}" target="_blank">フォルダ「${esc(r.folder)}」を開く</a>`;
+    $('folderName').value = ''; delete $('folderName').dataset.touched;
+    loadSets();
+  } catch (e) {
+    out.className = 'status err'; out.textContent = '移動できませんでした: ' + e.message;
+  } finally { $('moveBtn').disabled = false; }
+}
+document.addEventListener('input', e => { if (e.target.id === 'folderName') e.target.dataset.touched = '1'; });
 
 // ===== 辞書 =====
 async function loadDict() {
